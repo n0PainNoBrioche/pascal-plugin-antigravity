@@ -1,0 +1,24 @@
+services:
+  pascal-antigravity-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4319:4319"
+    environment:
+      ANTIGRAVITY_BRIDGE_HOST: "0.0.0.0"
+      ANTIGRAVITY_BRIDGE_PORT: "4319"
+      # Restrict to your Pascal Editor origin in production (e.g. "https://pascal.example.com")
+      ANTIGRAVITY_BRIDGE_CORS_ORIGIN: "*"
+      # Optional, recommended when exposing the bridge beyond localhost:
+      # ANTIGRAVITY_PASCAL_BRIDGE_TOKEN: "change-me"
+    volumes:
+      - antigravity-bridge-data:/data
+      # Optional: share the same SQLite database volume as your self-hosted Pascal container
+      # - pascal-data:/data/pascal/data
+
+volumes:
+  antigravity-bridge-data:
+  # pascal-data:
+  #   external: true
