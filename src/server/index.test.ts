@@ -147,4 +147,87 @@ describe('handleAntigravityPascalRequest', () => {
     expect(completeRes.status).toBe(200)
     expect(await completeRes.json()).toEqual({ ok: true, models: ['gemini-4-neon'] })
   })
+
+  it('supports GET /session and GET /events snapshot + live reconnection without aborting on disconnect', async () => {
+    let abortCalled = false
+    const subscribers = new Set<(event: AntigravitySseEvent) => void>()
+    const snapshotMessages = [
+      { id: 'u1', role: 'user' as const, content: 'Ajoute un mur', createdAt: 1, status: 'done' as const },
+      { id: 'a1', role: 'assistant' as const, content: 'En cours...', createdAt: 2, status: 'streaming' as const },
+    ]
+    const detachedManager = {
+      startTurn(payload: ChatRequestPayload, emit?: (event: AntigravitySseEvent) => void) {
+        if (emit) subscribers.add(emit)
+        emit?.({ type: 'session', sessionId: payload.sessionId, conversationId: 'conv-detached' })
+        emit?.({ type: 'text_delta', text: 'Working...' })
+        return {
+          unsubscribe: () => {
+            if (emit) subscribers.delete(emit)
+          },
+          done: Promise.resolve(),
+        }
+      },
+      getSessionSnapshot(sessionId: string) {
+        return {
+          ok: true,
+          sessionId,
+          conversationId: 'conv-detached',
+          isStreaming: true,
+          messages: snapshotMessages,
+        }
+      },
+      subscribeSession(sessionId: string, emit: (event: AntigravitySseEvent) => void) {
+        emit({
+          type: 'snapshot',
+          sessionId,
+          conversationId: 'conv-detached',
+          isStreaming: true,
+          messages: snapshotMessages,
+        })
+        emit({ type: 'text_delta', text: 'Fait !' })
+        emit({ type: 'done' })
+        return () => undefined
+      },
+      abortSession() {
+        abortCalled = true
+        return true
+      },
+      disposeSession: () => true,
+      disposeAll: () => undefined,
+    } as unknown as AntigravitySessionManager
+
+    const chatRes = await handleAntigravityPascalRequest(
+      new Request('http://127.0.0.1:4319/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'sess-bg', prompt: 'Ajoute un mur' }),
+      }),
+      { sessionManager: detachedManager },
+    )
+    expect(chatRes.status).toBe(200)
+    await chatRes.body?.cancel()
+    expect(abortCalled).toBe(false)
+
+    const sessionRes = await handleAntigravityPascalRequest(
+      new Request('http://127.0.0.1:4319/session?sessionId=sess-bg'),
+      { sessionManager: detachedManager },
+    )
+    expect(sessionRes.status).toBe(200)
+    expect(await sessionRes.json()).toMatchObject({
+      ok: true,
+      sessionId: 'sess-bg',
+      isStreaming: true,
+      conversationId: 'conv-detached',
+    })
+
+    const eventsRes = await handleAntigravityPascalRequest(
+      new Request('http://127.0.0.1:4319/events?sessionId=sess-bg'),
+      { sessionManager: detachedManager },
+    )
+    expect(eventsRes.status).toBe(200)
+    const sseText = await eventsRes.text()
+    expect(sseText).toContain('"type":"snapshot"')
+    expect(sseText).toContain('"type":"text_delta","text":"Fait !"')
+    expect(sseText).toContain('"type":"done"')
+  })
 })

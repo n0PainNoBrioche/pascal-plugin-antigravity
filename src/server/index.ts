@@ -412,6 +412,92 @@ export async function handleAntigravityPascalRequest(
     return jsonResponse({ ok: true }, 200, cors)
   }
 
+  if (request.method === 'GET' && subpath === '/session') {
+    const sessionId = new URL(request.url).searchParams.get('sessionId')?.trim()
+    if (!sessionId) {
+      return jsonResponse({ ok: false, error: 'sessionId query parameter is required.' }, 400, cors)
+    }
+    const snapshot =
+      typeof manager.getSessionSnapshot === 'function'
+        ? manager.getSessionSnapshot(sessionId)
+        : { ok: true, sessionId, conversationId: null, isStreaming: false, messages: [] }
+    return jsonResponse(snapshot, 200, cors)
+  }
+
+  if (request.method === 'GET' && subpath === '/events') {
+    const sessionId = new URL(request.url).searchParams.get('sessionId')?.trim()
+    if (!sessionId) {
+      return jsonResponse({ ok: false, error: 'sessionId query parameter is required.' }, 400, cors)
+    }
+
+    let unsubscribe: () => void = () => undefined
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        let closed = false
+        const closeStream = () => {
+          if (closed) return
+          closed = true
+          clearInterval(heartbeat)
+          unsubscribe()
+          try {
+            controller.close()
+          } catch {
+            // Stream already closed by client.
+          }
+        }
+        const safeEnqueue = (chunk: Uint8Array) => {
+          if (closed) return
+          try {
+            controller.enqueue(chunk)
+          } catch {
+            closeStream()
+          }
+        }
+        const heartbeat = setInterval(() => {
+          safeEnqueue(encoder.encode(': keepalive\n\n'))
+        }, 15_000)
+
+        request.signal?.addEventListener('abort', closeStream, { once: true })
+
+        if (typeof manager.subscribeSession === 'function') {
+          unsubscribe = manager.subscribeSession(sessionId, (event) => {
+            safeEnqueue(encodeSseEvent(event))
+            if (event.type === 'done') {
+              closeStream()
+            }
+          })
+        } else {
+          safeEnqueue(
+            encodeSseEvent({
+              type: 'snapshot',
+              sessionId,
+              conversationId: null,
+              isStreaming: false,
+              messages: [],
+            }),
+          )
+          safeEnqueue(encodeSseEvent({ type: 'done' }))
+          closeStream()
+        }
+      },
+      cancel() {
+        unsubscribe()
+      },
+    })
+
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        ...cors,
+      },
+    })
+  }
+
   if (request.method === 'POST' && subpath === '/abort') {
     const body = (await request.json().catch(() => ({}))) as { sessionId?: string }
     if (!body.sessionId) {
@@ -445,6 +531,86 @@ export async function handleAntigravityPascalRequest(
     const hasAttachments = Array.isArray(payload?.attachments) && payload.attachments.length > 0
     if (!hasPrompt && !hasAttachments) {
       return jsonResponse({ ok: false, error: 'prompt or attachments are required.' }, 400, cors)
+    }
+
+    // Detached execution path: closing the browser tab only unsubscribes the SSE
+    // stream while Antigravity keeps running in the background.
+    if (typeof manager.startTurn === 'function') {
+      let unsubscribe: () => void = () => undefined
+      let turnHandle: { unsubscribe: () => void; done: Promise<void> }
+      try {
+        // Start turn before creating stream so synchronous validation errors return HTTP 409/400.
+        const buffered: AntigravitySseEvent[] = []
+        let forward: ((event: AntigravitySseEvent) => void) | null = null
+        turnHandle = manager.startTurn(payload, (event) => {
+          if (forward) {
+            forward(event)
+          } else {
+            buffered.push(event)
+          }
+        })
+        unsubscribe = turnHandle.unsubscribe
+
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder()
+            let closed = false
+            const closeStream = () => {
+              if (closed) return
+              closed = true
+              clearInterval(heartbeat)
+              unsubscribe()
+              try {
+                controller.close()
+              } catch {
+                // Stream already closed by client.
+              }
+            }
+            const safeEnqueue = (chunk: Uint8Array) => {
+              if (closed) return
+              try {
+                controller.enqueue(chunk)
+              } catch {
+                closeStream()
+              }
+            }
+            const heartbeat = setInterval(() => {
+              safeEnqueue(encoder.encode(': keepalive\n\n'))
+            }, 15_000)
+
+            request.signal?.addEventListener('abort', closeStream, { once: true })
+
+            const emitEvent = (event: AntigravitySseEvent) => {
+              safeEnqueue(encodeSseEvent(event))
+              if (event.type === 'done') {
+                closeStream()
+              }
+            }
+            forward = emitEvent
+            for (const ev of buffered) {
+              emitEvent(ev)
+            }
+            buffered.length = 0
+          },
+          cancel() {
+            unsubscribe()
+          },
+        })
+
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            ...cors,
+          },
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to start Antigravity turn.'
+        return jsonResponse({ ok: false, error: message }, 409, cors)
+      }
     }
 
     const abortController = new AbortController()

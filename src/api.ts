@@ -160,8 +160,45 @@ export async function streamAntigravityChat(
     signal,
   })
 
+  await consumeSseResponse(response, 'Antigravity request failed', onEvent)
+}
+
+/**
+ * Reconnects to an existing session on the bridge/host, receives a `snapshot`
+ * of persisted messages, and continues streaming live SSE events if a turn is
+ * still running in the background.
+ */
+export async function reconnectAntigravitySession(
+  settings: Pick<AntigravityPluginSettings, 'mode' | 'bridgeUrl' | 'bridgeToken'>,
+  sessionId: string,
+  onEvent: (event: AntigravitySseEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const base = resolveEndpointBase(settings)
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+  }
+  if (settings.bridgeToken.trim()) {
+    headers.Authorization = `Bearer ${settings.bridgeToken.trim()}`
+  }
+
+  const response = await fetch(`${base}/events?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: 'GET',
+    headers,
+    cache: 'no-store',
+    signal,
+  })
+
+  await consumeSseResponse(response, 'Unable to reconnect to session', onEvent)
+}
+
+async function consumeSseResponse(
+  response: Response,
+  errorPrefix: string,
+  onEvent: (event: AntigravitySseEvent) => void,
+): Promise<void> {
   if (!response.ok) {
-    let message = `Antigravity request failed (${response.status})`
+    let message = `${errorPrefix} (${response.status})`
     try {
       const errorJson = (await response.json()) as { error?: string }
       if (errorJson?.error) message = errorJson.error

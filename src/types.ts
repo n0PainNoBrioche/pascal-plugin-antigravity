@@ -124,7 +124,22 @@ export interface ChatRequestPayload {
   sceneContext?: PascalSceneContext | null
 }
 
+export interface AntigravitySessionSnapshot {
+  ok: boolean
+  sessionId: string
+  conversationId: string | null
+  isStreaming: boolean
+  messages: ChatMessage[]
+}
+
 export type AntigravitySseEvent =
+  | {
+      type: 'snapshot'
+      sessionId: string
+      conversationId?: string | null
+      isStreaming: boolean
+      messages: ChatMessage[]
+    }
   | {
       type: 'session'
       sessionId: string

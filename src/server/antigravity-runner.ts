@@ -22,8 +22,11 @@ import type {
   AntigravityEffort,
   AntigravityHealthResponse,
   AntigravityModelsResponse,
+  AntigravitySessionSnapshot,
   AntigravitySseEvent,
   ChatAttachmentInput,
+  ChatAttachmentPreview,
+  ChatMessage,
   ChatRequestPayload,
 } from '../types.ts'
 import { isAuthenticationError, parseAntigravityStreamLine } from './stream-parser.ts'
@@ -137,6 +140,16 @@ interface PersistentSession {
   stderrLines: string[]
   activeTurn: ActiveTurn | null
   idleTimer: ReturnType<typeof setTimeout> | null
+}
+
+interface SessionHistory {
+  sessionId: string
+  conversationId: string | null
+  isStreaming: boolean
+  messages: ChatMessage[]
+  activeAssistantId: string | null
+  subscribers: Set<(event: AntigravitySseEvent) => void>
+  cleanupTimer: ReturnType<typeof setTimeout> | null
 }
 
 function isExecutableFile(candidate: string): boolean {
@@ -362,6 +375,7 @@ export async function listAntigravityModels(
  */
 export class AntigravitySessionManager {
   private readonly sessions = new Map<string, PersistentSession>()
+  private readonly histories = new Map<string, SessionHistory>()
   private readonly options: AntigravityRunnerOptions
   private readonly idleTimeoutMs: number
 
@@ -370,11 +384,120 @@ export class AntigravitySessionManager {
     this.idleTimeoutMs = options.idleTimeoutMs ?? 15 * 60 * 1000
   }
 
+  private getOrCreateHistory(sessionId: string): SessionHistory {
+    let history = this.histories.get(sessionId)
+    if (!history) {
+      history = {
+        sessionId,
+        conversationId: null,
+        isStreaming: false,
+        messages: [],
+        activeAssistantId: null,
+        subscribers: new Set(),
+        cleanupTimer: null,
+      }
+      this.histories.set(sessionId, history)
+    }
+    return history
+  }
+
+  private scheduleHistoryCleanup(history: SessionHistory): void {
+    if (history.cleanupTimer) clearTimeout(history.cleanupTimer)
+    const ttlMs = Math.max(this.idleTimeoutMs, 60 * 60 * 1000)
+    history.cleanupTimer = setTimeout(() => {
+      if (!history.isStreaming && history.subscribers.size === 0) {
+        this.histories.delete(history.sessionId)
+      }
+    }, ttlMs)
+    history.cleanupTimer.unref?.()
+  }
+
+  private broadcastHistoryEvent(history: SessionHistory, event: AntigravitySseEvent): void {
+    if (event.type === 'init' && event.conversationId) {
+      history.conversationId = event.conversationId
+    } else if (event.type === 'session' && event.conversationId) {
+      history.conversationId = event.conversationId
+    } else if (event.type === 'result' && event.conversationId) {
+      history.conversationId = event.conversationId
+    }
+
+    const assistantId = history.activeAssistantId
+    if (assistantId) {
+      const msg = history.messages.find((m) => m.id === assistantId)
+      if (msg) {
+        if (event.type === 'text_delta') {
+          msg.content += event.text
+        } else if (event.type === 'tool_update') {
+          const existing = msg.toolCalls ?? []
+          const idx = existing.findIndex((item) => item.id === event.tool.id)
+          msg.toolCalls =
+            idx === -1
+              ? [...existing, event.tool]
+              : existing.map((item, i) => (i === idx ? event.tool : item))
+        } else if (event.type === 'scene_changed') {
+          msg.sceneMutated = true
+        } else if (event.type === 'result') {
+          msg.status = event.error ? 'error' : 'done'
+          msg.error = event.error
+          msg.durationSeconds = event.durationSeconds
+          msg.usage = event.usage
+        } else if (event.type === 'error') {
+          msg.status = 'error'
+          msg.error = event.message
+        }
+      }
+    }
+
+    for (const sub of Array.from(history.subscribers)) {
+      try {
+        sub(event)
+      } catch {
+        history.subscribers.delete(sub)
+      }
+    }
+  }
+
+  getSessionSnapshot(sessionId: string): AntigravitySessionSnapshot {
+    const history = this.histories.get(sessionId)
+    return {
+      ok: true,
+      sessionId,
+      conversationId: history?.conversationId ?? null,
+      isStreaming: history?.isStreaming ?? false,
+      messages: history ? structuredClone(history.messages) : [],
+    }
+  }
+
+  subscribeSession(
+    sessionId: string,
+    emit: (event: AntigravitySseEvent) => void,
+  ): () => void {
+    const snapshot = this.getSessionSnapshot(sessionId)
+    emit({
+      type: 'snapshot',
+      sessionId: snapshot.sessionId,
+      conversationId: snapshot.conversationId,
+      isStreaming: snapshot.isStreaming,
+      messages: snapshot.messages,
+    })
+
+    const history = this.histories.get(sessionId)
+    if (!history || !history.isStreaming) {
+      emit({ type: 'done' })
+      return () => undefined
+    }
+
+    history.subscribers.add(emit)
+    return () => {
+      history.subscribers.delete(emit)
+    }
+  }
+
   private scheduleIdleCleanup(session: PersistentSession): void {
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       if (!session.activeTurn) {
-        this.disposeSession(session.sessionId)
+        this.killSessionProcess(session.sessionId)
       }
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
@@ -528,6 +651,89 @@ export class AntigravitySessionManager {
     }
   }
 
+  /**
+   * Starts a chat turn detached from any HTTP request lifecycle so closing the
+   * browser tab does not kill Antigravity mid-task. Callers can subscribe and
+   * unsubscribe freely without interrupting the underlying process.
+   */
+  startTurn(
+    payload: ChatRequestPayload,
+    emit?: (event: AntigravitySseEvent) => void,
+  ): { unsubscribe: () => void; done: Promise<void> } {
+    const history = this.getOrCreateHistory(payload.sessionId)
+    if (history.cleanupTimer) {
+      clearTimeout(history.cleanupTimer)
+      history.cleanupTimer = null
+    }
+    if (history.isStreaming) {
+      throw new Error('Another turn is already running in this session. Abort it first.')
+    }
+
+    const promptText = payload.prompt.trim()
+    const attachmentsPreview: ChatAttachmentPreview[] | undefined =
+      payload.attachments && payload.attachments.length > 0
+        ? payload.attachments.map((item, idx) => ({
+            id: `att-${Date.now()}-${idx}`,
+            name: item.name,
+            mimeType: item.mimeType,
+            previewUrl: '',
+            sizeBytes: Math.floor((item.dataBase64.length * 3) / 4),
+          }))
+        : undefined
+
+    const userMsg: ChatMessage = {
+      id: `user-${randomUUID()}`,
+      role: 'user',
+      content:
+        promptText ||
+        (attachmentsPreview?.length === 1
+          ? `Image jointe : ${attachmentsPreview[0]?.name}`
+          : `${attachmentsPreview?.length ?? 0} images jointes`),
+      attachments: attachmentsPreview,
+      createdAt: Date.now(),
+      status: 'done',
+    }
+    const assistantMsgId = `assistant-${randomUUID()}`
+    const assistantMsg: ChatMessage = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      createdAt: Date.now(),
+      toolCalls: [],
+      status: 'streaming',
+    }
+
+    history.messages.push(userMsg, assistantMsg)
+    history.activeAssistantId = assistantMsgId
+    history.isStreaming = true
+
+    if (emit) {
+      history.subscribers.add(emit)
+    }
+    const unsubscribe = () => {
+      if (emit) history.subscribers.delete(emit)
+    }
+
+    const done = this.runTurn(payload, (event) => {
+      this.broadcastHistoryEvent(history, event)
+    })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : 'Antigravity turn failed.'
+        this.broadcastHistoryEvent(history, { type: 'error', message })
+      })
+      .finally(() => {
+        if (history.isStreaming) {
+          history.isStreaming = false
+          this.broadcastHistoryEvent(history, { type: 'done' })
+        }
+        history.activeAssistantId = null
+        history.subscribers.clear()
+        this.scheduleHistoryCleanup(history)
+      })
+
+    return { unsubscribe, done }
+  }
+
   async runTurn(
     payload: ChatRequestPayload,
     emit: (event: AntigravitySseEvent) => void,
@@ -549,7 +755,7 @@ export class AntigravitySessionManager {
         session.skipPermissions !== desiredSkip)
     ) {
       const priorConversation = session.conversationId
-      this.disposeSession(payload.sessionId)
+      this.killSessionProcess(payload.sessionId)
       session = this.spawnSession({
         ...payload,
         conversationId: payload.conversationId ?? priorConversation,
@@ -640,18 +846,37 @@ export class AntigravitySessionManager {
 
   abortSession(sessionId: string): boolean {
     const session = this.sessions.get(sessionId)
-    if (!session) return false
-    const turn = session.activeTurn
-    session.activeTurn = null
-    this.disposeSession(sessionId)
+    const history = this.histories.get(sessionId)
+    if (!session && !history?.isStreaming) return false
+    const turn = session?.activeTurn ?? null
+    if (session) {
+      session.activeTurn = null
+    }
+    this.killSessionProcess(sessionId)
     if (turn) {
       turn.emit({ type: 'error', message: 'Generation stopped by user.' })
       turn.resolve()
+    } else if (history?.isStreaming) {
+      this.broadcastHistoryEvent(history, { type: 'error', message: 'Generation stopped by user.' })
+    }
+    if (history) {
+      const assistantId = history.activeAssistantId
+      if (assistantId) {
+        const msg = history.messages.find((m) => m.id === assistantId)
+        if (msg && (msg.status === 'streaming' || msg.status === 'error')) {
+          msg.status = 'aborted'
+        }
+      }
+      history.isStreaming = false
+      this.broadcastHistoryEvent(history, { type: 'done' })
+      history.activeAssistantId = null
+      history.subscribers.clear()
+      this.scheduleHistoryCleanup(history)
     }
     return true
   }
 
-  disposeSession(sessionId: string): boolean {
+  private killSessionProcess(sessionId: string): boolean {
     const session = this.sessions.get(sessionId)
     if (!session) return false
     this.sessions.delete(sessionId)
@@ -669,8 +894,19 @@ export class AntigravitySessionManager {
     return true
   }
 
+  disposeSession(sessionId: string): boolean {
+    const killed = this.killSessionProcess(sessionId)
+    const history = this.histories.get(sessionId)
+    if (history) {
+      if (history.cleanupTimer) clearTimeout(history.cleanupTimer)
+      history.subscribers.clear()
+      this.histories.delete(sessionId)
+    }
+    return killed || Boolean(history)
+  }
+
   disposeAll(): void {
-    for (const id of Array.from(this.sessions.keys())) {
+    for (const id of Array.from(new Set([...this.sessions.keys(), ...this.histories.keys()]))) {
       this.disposeSession(id)
     }
   }

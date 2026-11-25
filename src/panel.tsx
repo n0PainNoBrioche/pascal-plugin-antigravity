@@ -11,6 +11,7 @@ import {
   fetchAntigravityHealth,
   fetchAntigravityModels,
   HOST_API_BASE,
+  reconnectAntigravitySession,
   resetAntigravitySession,
   resolveEndpointBase,
   startAntigravityAuth,
@@ -32,6 +33,7 @@ import type {
 } from './types'
 
 const SETTINGS_STORAGE_KEY = 'pascal-plugin-antigravity:settings:v1'
+const SESSION_STORAGE_KEY = 'pascal-plugin-antigravity:session-id:v1'
 const MAX_UPLOAD_FILES = 6
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 const ACCEPTED_FILE_TYPES = 'image/png,image/jpeg,image/webp,image/gif,application/pdf'
@@ -121,6 +123,28 @@ function saveSettings(settings: AntigravityPluginSettings): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  } catch {
+    // Ignore storage quota / privacy mode errors.
+  }
+}
+
+function loadStoredSessionId(): string {
+  if (typeof window === 'undefined') return createId('ag-session')
+  try {
+    const existing = window.localStorage.getItem(SESSION_STORAGE_KEY)?.trim()
+    if (existing) return existing
+    const fresh = createId('ag-session')
+    window.localStorage.setItem(SESSION_STORAGE_KEY, fresh)
+    return fresh
+  } catch {
+    return createId('ag-session')
+  }
+}
+
+function saveStoredSessionId(sessionId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId)
   } catch {
     // Ignore storage quota / privacy mode errors.
   }
@@ -325,7 +349,7 @@ export default function AntigravityChatPanel() {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
 
-  const [sessionId, setSessionId] = useState<string>(() => createId('ag-session'))
+  const [sessionId, setSessionId] = useState<string>(() => loadStoredSessionId())
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -502,13 +526,149 @@ export default function AntigravityChatPanel() {
     setTimeout(() => setSceneNotice(null), 3500)
   }, [])
 
+  const applySseEvent = useCallback(
+    (
+      event: AntigravitySseEvent,
+      targetAssistantId?: string,
+      onSceneMutated?: () => void,
+    ) => {
+      if (event.type === 'snapshot') {
+        if (event.conversationId !== undefined) {
+          setConversationId(event.conversationId ?? null)
+        }
+        if (event.messages.length > 0) {
+          setMessages(event.messages)
+        }
+        setIsStreaming(event.isStreaming)
+        return
+      }
+      if (event.type === 'init' && event.conversationId) {
+        setConversationId(event.conversationId)
+        return
+      }
+      if (event.type === 'session' && event.conversationId) {
+        setConversationId(event.conversationId)
+        return
+      }
+
+      const matchesTarget = (msg: ChatMessage, idx: number, list: ChatMessage[]) => {
+        if (targetAssistantId) return msg.id === targetAssistantId
+        if (msg.role !== 'assistant') return false
+        if (msg.status === 'streaming') return true
+        // Fallback to last assistant message when finalizing
+        return idx === list.length - 1
+      }
+
+      if (event.type === 'text_delta') {
+        setMessages((prev) =>
+          prev.map((msg, idx, list) =>
+            matchesTarget(msg, idx, list) ? { ...msg, content: msg.content + event.text } : msg,
+          ),
+        )
+        return
+      }
+      if (event.type === 'tool_update') {
+        setMessages((prev) =>
+          prev.map((msg, idx, list) => {
+            if (!matchesTarget(msg, idx, list)) return msg
+            const existing = msg.toolCalls ?? []
+            const foundIdx = existing.findIndex((item) => item.id === event.tool.id)
+            const nextTools =
+              foundIdx === -1
+                ? [...existing, event.tool]
+                : existing.map((item, i) => (i === foundIdx ? event.tool : item))
+            return { ...msg, toolCalls: nextTools }
+          }),
+        )
+        return
+      }
+      if (event.type === 'scene_changed') {
+        onSceneMutated?.()
+        setMessages((prev) =>
+          prev.map((msg, idx, list) =>
+            matchesTarget(msg, idx, list) ? { ...msg, sceneMutated: true } : msg,
+          ),
+        )
+        if (settings.autoReloadScene && event.toolName === 'save_scene') {
+          void handleReloadScene()
+        }
+        return
+      }
+      if (event.type === 'result') {
+        if (event.conversationId) setConversationId(event.conversationId)
+        setMessages((prev) =>
+          prev.map((msg, idx, list) =>
+            matchesTarget(msg, idx, list)
+              ? {
+                  ...msg,
+                  status: event.error ? 'error' : 'done',
+                  error: event.error,
+                  durationSeconds: event.durationSeconds,
+                  usage: event.usage,
+                }
+              : msg,
+          ),
+        )
+        return
+      }
+      if (event.type === 'error') {
+        if (event.authRequired) {
+          setAuthWarning(event.message)
+        }
+        setMessages((prev) =>
+          prev.map((msg, idx, list) =>
+            matchesTarget(msg, idx, list)
+              ? { ...msg, status: 'error', error: event.message }
+              : msg,
+          ),
+        )
+      }
+    },
+    [handleReloadScene, settings.autoReloadScene],
+  )
+
+  // Reconnect to any in-flight or persisted session on the bridge/host when opening Pascal.
+  useEffect(() => {
+    const controller = new AbortController()
+    abortRef.current = controller
+    let mutatedInReconnect = false
+
+    reconnectAntigravitySession(
+      settings,
+      sessionId,
+      (event) => {
+        applySseEvent(event, undefined, () => {
+          mutatedInReconnect = true
+        })
+        if (event.type === 'done') {
+          setIsStreaming(false)
+          if (mutatedInReconnect && settings.autoReloadScene) {
+            void handleReloadScene()
+          }
+        }
+      },
+      controller.signal,
+    ).catch(() => {
+      // Ignore reconnect failures (e.g. offline bridge or component unmount).
+    })
+
+    return () => {
+      controller.abort()
+      if (abortRef.current === controller) {
+        abortRef.current = null
+      }
+    }
+  }, [applySseEvent, handleReloadScene, sessionId, settings])
+
   const handleNewChat = useCallback(async () => {
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
     }
     await resetAntigravitySession(settings, sessionId)
-    setSessionId(createId('ag-session'))
+    const nextSessionId = createId('ag-session')
+    saveStoredSessionId(nextSessionId)
+    setSessionId(nextSessionId)
     setConversationId(null)
     setMessages([])
     setIsStreaming(false)
@@ -630,76 +790,9 @@ export default function AntigravityChatPanel() {
       const liveSceneContext = settings.includeSceneContext ? readPascalSceneContext() : null
 
       const handleEvent = (event: AntigravitySseEvent) => {
-        if (event.type === 'init' && event.conversationId) {
-          setConversationId(event.conversationId)
-          return
-        }
-        if (event.type === 'session' && event.conversationId) {
-          setConversationId(event.conversationId)
-          return
-        }
-        if (event.type === 'text_delta') {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMsgId ? { ...msg, content: msg.content + event.text } : msg,
-            ),
-          )
-          return
-        }
-        if (event.type === 'tool_update') {
-          setMessages((prev) =>
-            prev.map((msg) => {
-              if (msg.id !== assistantMsgId) return msg
-              const existing = msg.toolCalls ?? []
-              const idx = existing.findIndex((item) => item.id === event.tool.id)
-              const nextTools =
-                idx === -1
-                  ? [...existing, event.tool]
-                  : existing.map((item, i) => (i === idx ? event.tool : item))
-              return { ...msg, toolCalls: nextTools }
-            }),
-          )
-          return
-        }
-        if (event.type === 'scene_changed') {
+        applySseEvent(event, assistantMsgId, () => {
           mutatedSceneInTurn = true
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, sceneMutated: true } : msg)),
-          )
-          if (settings.autoReloadScene && event.toolName === 'save_scene') {
-            void handleReloadScene()
-          }
-          return
-        }
-        if (event.type === 'result') {
-          if (event.conversationId) setConversationId(event.conversationId)
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMsgId
-                ? {
-                    ...msg,
-                    status: event.error ? 'error' : 'done',
-                    error: event.error,
-                    durationSeconds: event.durationSeconds,
-                    usage: event.usage,
-                  }
-                : msg,
-            ),
-          )
-          return
-        }
-        if (event.type === 'error') {
-          if (event.authRequired) {
-            setAuthWarning(event.message)
-          }
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMsgId
-                ? { ...msg, status: 'error', error: event.message }
-                : msg,
-            ),
-          )
-        }
+        })
       }
 
       const modelHasEmbeddedEffort = /-(?:low|medium|high|xhigh|max)$/i.test(settings.model.trim())
