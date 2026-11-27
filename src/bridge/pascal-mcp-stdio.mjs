@@ -65,6 +65,18 @@ stdinIn.on('line', (line) => {
   }
   try {
     const msg = JSON.parse(line)
+    if (msg.method === 'server/discover' && msg.id !== undefined) {
+      // `pascal mcp connect` drops pre-initialize HTTP requests without replying on stdout,
+      // which stalls go_sdk/mcp's `(*Client).discover`. Reply -32601 so it falls back to `initialize`.
+      const reply = JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg.id,
+        error: { code: -32601, message: 'Method not found' },
+      })
+      logWire('WRAPPER_OUT', reply)
+      process.stdout.write(`${reply}\n`)
+      return
+    }
     if (msg.method === 'initialize' && msg.id !== undefined) {
       initRequestId = msg.id
       child.stdin.write(`${line}\n`)
