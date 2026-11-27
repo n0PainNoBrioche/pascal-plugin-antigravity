@@ -23,15 +23,15 @@ if [ -d /app/skills ]; then
   cp -rf /app/skills/* "${GEMINI_DIR}/config/skills/"
 fi
 
-# Seed default Pascal MCP config if not already present
+# Seed or update Pascal MCP config to use the serialized stdio wrapper
 MCP_CONFIG="${GEMINI_DIR}/config/mcp_config.json"
-if [ ! -f "${MCP_CONFIG}" ]; then
+if [ ! -f "${MCP_CONFIG}" ] || grep -q '"command": "pascal"' "${MCP_CONFIG}"; then
   cat > "${MCP_CONFIG}" <<'JSON'
 {
   "mcpServers": {
     "pascal": {
-      "command": "pascal",
-      "args": ["mcp", "connect"],
+      "command": "node",
+      "args": ["/app/src/bridge/pascal-mcp-stdio.mjs"],
       "disabled": false
     }
   }
