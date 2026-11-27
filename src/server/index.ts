@@ -390,23 +390,58 @@ export async function handleAntigravityPascalRequest(
   if (request.method === 'GET' && subpath === '/diag') {
     const fs = await import('node:fs')
     const pathMod = await import('node:path')
+    const { execFile, spawn } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const execFileAsync = promisify(execFile)
     const appData = options.appDataDir ?? process.env.ANTIGRAVITY_PASCAL_APP_DATA_DIR ?? ''
+    const geminiHome = options.geminiHome ?? process.env.ANTIGRAVITY_PASCAL_GEMINI_HOME ?? ''
     const hasOAuthTokenFile = appData ? fs.existsSync(pathMod.join(appData, 'antigravity-oauth-token')) : false
-    const logDir = appData ? pathMod.join(appData, 'log') : ''
-    let latestLogName: string | null = null
-    let latestLogTail: string[] = []
-    if (logDir && fs.existsSync(logDir)) {
-      const files = fs
-        .readdirSync(logDir)
-        .map((name) => ({ name, mtime: fs.statSync(pathMod.join(logDir, name)).mtimeMs }))
-        .sort((a, b) => b.mtime - a.mtime)
-      if (files[0]) {
-        latestLogName = files[0].name
-        const content = fs.readFileSync(pathMod.join(logDir, latestLogName), 'utf8')
-        latestLogTail = content.split(/\r?\n/).slice(-50)
-      }
+    const listNames = (dir: string) => (dir && fs.existsSync(dir) ? fs.readdirSync(dir) : [])
+
+    let agyVersion = ''
+    try {
+      const { stdout } = await execFileAsync('/usr/local/bin/agy', ['--version'], { timeout: 5000 })
+      agyVersion = stdout.trim()
+    } catch (e) {
+      agyVersion = e instanceof Error ? e.message : String(e)
     }
-    return jsonResponse({ ok: true, appData, hasOAuthTokenFile, latestLogName, latestLogTail }, 200, cors)
+
+    let googleReachable = ''
+    try {
+      const r = await fetch('https://accounts.google.com', { method: 'HEAD', signal: AbortSignal.timeout(4000) })
+      googleReachable = `HTTP ${r.status}`
+    } catch (e) {
+      googleReachable = e instanceof Error ? e.message : String(e)
+    }
+
+    const emptyGemini = '/tmp/diag-empty-gemini'
+    fs.mkdirSync(pathMod.join(emptyGemini, 'config'), { recursive: true })
+    const agyNoMcp = await new Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
+      let stdout = ''
+      let stderr = ''
+      let timedOut = false
+      const c = spawn('/usr/local/bin/agy', ['--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'], {
+        cwd: '/app',
+        env: { ...process.env, GEMINI_HOME: emptyGemini, ANTIGRAVITY_APP_DATA_DIR: appData || '/tmp/diag-empty-app', AGY_ACP_FORCE_FILE_STORAGE: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      c.stdout.on('data', (d) => { stdout += d.toString() })
+      c.stderr.on('data', (d) => { stderr += d.toString() })
+      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 8000)
+      c.once('exit', (code) => { clearTimeout(t); resolve({ stdout, stderr, code, timedOut }) })
+      c.stdin.write(JSON.stringify({ event: 'user', message: { content: 'OK' } }) + '\n')
+    })
+
+    return jsonResponse({
+      ok: true,
+      agyVersion,
+      googleReachable,
+      appData,
+      hasOAuthTokenFile,
+      appDataFiles: listNames(appData),
+      geminiConfigFiles: listNames(geminiHome ? pathMod.join(geminiHome, 'config') : ''),
+      agyNoMcp,
+    }, 200, cors)
   }
 
   if (request.method === 'GET' && subpath === '/models') {
