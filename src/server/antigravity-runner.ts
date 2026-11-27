@@ -234,6 +234,9 @@ export function buildChildEnv(options: AntigravityRunnerOptions = {}): NodeJS.Pr
   const appDataDir = options.appDataDir ?? process.env.ANTIGRAVITY_PASCAL_APP_DATA_DIR
   if (appDataDir) {
     env.ANTIGRAVITY_APP_DATA_DIR = appDataDir
+    if (!env.AGY_ACP_FORCE_FILE_STORAGE) {
+      env.AGY_ACP_FORCE_FILE_STORAGE = '1'
+    }
   } else {
     delete env.ANTIGRAVITY_APP_DATA_DIR
   }
@@ -572,6 +575,7 @@ export class AntigravitySessionManager {
         .map((l) => l.trim())
         .filter(Boolean)
       for (const line of lines) {
+        console.error('[antigravity-runner] stderr:', line)
         session.stderrLines.push(line)
         if (session.stderrLines.length > 40) {
           session.stderrLines.shift()

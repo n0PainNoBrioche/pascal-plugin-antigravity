@@ -27,6 +27,7 @@ ENV NODE_ENV=production \
     ANTIGRAVITY_BRIDGE_CORS_ORIGIN=* \
     ANTIGRAVITY_PASCAL_GEMINI_HOME=/data/gemini \
     ANTIGRAVITY_PASCAL_APP_DATA_DIR=/data/antigravity \
+    AGY_ACP_FORCE_FILE_STORAGE=1 \
     PASCAL_HOME=/data/pascal \
     HOME=/root
 
