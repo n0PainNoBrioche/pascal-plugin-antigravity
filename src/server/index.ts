@@ -428,7 +428,7 @@ export async function handleAntigravityPascalRequest(
         })
         c.stdout.on('data', (d) => { stdout += d.toString() })
         c.stderr.on('data', (d) => { stderr += d.toString() })
-        const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 6000)
+        const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 15000)
         c.once('exit', (code) => { clearTimeout(t); resolve({ label, stdout, stderr, code, timedOut }) })
         if (writeStdin) c.stdin.write(writeStdin)
         if (endStdin) c.stdin.end()
@@ -444,13 +444,19 @@ export async function handleAntigravityPascalRequest(
       true,
     )
 
-    let diagLog = ''
+    let diagErrors: string[] = []
+    let diagTail = ''
     try {
       if (fs.existsSync(diagLogPath)) {
-        diagLog = fs.readFileSync(diagLogPath, 'utf8').slice(-6000)
+        const full = fs.readFileSync(diagLogPath, 'utf8')
+        diagErrors = full
+          .split(/\r?\n/)
+          .filter((l) => /^[EW]\d{4}|streamGenerateContent|token|login|auth|error|fail|panic/i.test(l))
+          .slice(0, 60)
+        diagTail = full.slice(-3000)
       }
     } catch (e) {
-      diagLog = e instanceof Error ? e.message : String(e)
+      diagTail = e instanceof Error ? e.message : String(e)
     }
 
     return jsonResponse({
@@ -459,10 +465,13 @@ export async function handleAntigravityPascalRequest(
       googleReachable,
       appData,
       hasOAuthTokenFile,
+      dataFiles: listNames('/data'),
       appDataFiles: listNames(appData),
-      geminiConfigFiles: listNames(geminiHome ? pathMod.join(geminiHome, 'config') : ''),
+      geminiFiles: listNames(geminiHome),
+      rootFiles: listNames('/root'),
       testPromptFlag,
-      diagLog,
+      diagErrors,
+      diagTail,
     }, 200, cors)
   }
 
