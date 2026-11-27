@@ -21,6 +21,7 @@ import {
   readPascalSceneContext,
   reloadActivePascalScene,
 } from './scene-context'
+import { MarkdownContent } from './markdown'
 import type {
   AntigravityEffort,
   AntigravityHealthResponse,
@@ -298,46 +299,7 @@ function ToolCallCard({ tool }: { tool: ChatToolCall }) {
 }
 
 function FormattedMessageText({ text }: { text: string }) {
-  const segments = useMemo(() => {
-    const parts: Array<{ kind: 'text' | 'code'; content: string; lang?: string }> = []
-    const regex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g
-    let lastIndex = 0
-    let match = regex.exec(text)
-    while (match) {
-      if (match.index > lastIndex) {
-        parts.push({ kind: 'text', content: text.slice(lastIndex, match.index) })
-      }
-      parts.push({ kind: 'code', lang: match[1] || undefined, content: match[2] ?? '' })
-      lastIndex = match.index + match[0].length
-      match = regex.exec(text)
-    }
-    if (lastIndex < text.length) {
-      parts.push({ kind: 'text', content: text.slice(lastIndex) })
-    }
-    return parts
-  }, [text])
-
-  return (
-    <div className="space-y-2 text-xs leading-relaxed">
-      {segments.map((segment, index) => {
-        if (segment.kind === 'code') {
-          return (
-            <pre
-              className="overflow-x-auto rounded-lg border border-sidebar-border/70 bg-black/30 p-2.5 font-mono text-[11px] leading-snug text-sidebar-foreground/90"
-              key={index}
-            >
-              <code>{segment.content}</code>
-            </pre>
-          )
-        }
-        return (
-          <div className="whitespace-pre-wrap break-words" key={index}>
-            {segment.content}
-          </div>
-        )
-      })}
-    </div>
-  )
+  return <MarkdownContent text={text} />
 }
 
 export default function AntigravityChatPanel() {
