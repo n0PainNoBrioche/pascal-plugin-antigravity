@@ -387,6 +387,24 @@ export async function handleAntigravityPascalRequest(
     return jsonResponse(health, 200, cors)
   }
 
+  if (request.method === 'GET' && subpath === '/diag') {
+    const { spawn } = await import('node:child_process')
+    const res = await new Promise<{ stdoutHead: string; stdoutLen: number; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
+      let stdout = ''
+      let stderr = ''
+      let timedOut = false
+      const c = spawn('node', ['/app/src/bridge/pascal-mcp-stdio.mjs'], { cwd: '/app', env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+      c.stdout.on('data', (d) => { stdout += d.toString() })
+      c.stderr.on('data', (d) => { stderr += d.toString() })
+      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 5000)
+      c.once('exit', (code) => { clearTimeout(t); resolve({ stdoutHead: stdout.slice(0, 600), stdoutLen: stdout.length, stderr, code, timedOut }) })
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'diag', version: '1.0' } } }) + '\n')
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n')
+    })
+    return jsonResponse({ ok: true, res }, 200, cors)
+  }
+
   if (request.method === 'GET' && subpath === '/models') {
     const result = await modelsList(options)
     return jsonResponse(result, 200, cors)
