@@ -416,21 +416,38 @@ export async function handleAntigravityPascalRequest(
 
     const emptyGemini = '/tmp/diag-empty-gemini'
     fs.mkdirSync(pathMod.join(emptyGemini, 'config'), { recursive: true })
-    const agyNoMcp = await new Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
-      let stdout = ''
-      let stderr = ''
-      let timedOut = false
-      const c = spawn('/usr/local/bin/agy', ['--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'], {
-        cwd: '/app',
-        env: { ...process.env, GEMINI_HOME: emptyGemini, ANTIGRAVITY_APP_DATA_DIR: appData || '/tmp/diag-empty-app', AGY_ACP_FORCE_FILE_STORAGE: '1' },
-        stdio: ['pipe', 'pipe', 'pipe'],
+    const runTest = (label: string, args: string[], writeStdin?: string, endStdin = false) =>
+      new Promise<{ label: string; stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
+        let stdout = ''
+        let stderr = ''
+        let timedOut = false
+        const c = spawn('/usr/local/bin/agy', args, {
+          cwd: '/app',
+          env: { ...process.env, GEMINI_HOME: emptyGemini, ANTIGRAVITY_APP_DATA_DIR: appData || '/tmp/diag-empty-app', AGY_ACP_FORCE_FILE_STORAGE: '1' },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+        c.stdout.on('data', (d) => { stdout += d.toString() })
+        c.stderr.on('data', (d) => { stderr += d.toString() })
+        const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 6000)
+        c.once('exit', (code) => { clearTimeout(t); resolve({ label, stdout, stderr, code, timedOut }) })
+        if (writeStdin) c.stdin.write(writeStdin)
+        if (endStdin) c.stdin.end()
       })
-      c.stdout.on('data', (d) => { stdout += d.toString() })
-      c.stderr.on('data', (d) => { stderr += d.toString() })
-      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 8000)
-      c.once('exit', (code) => { clearTimeout(t); resolve({ stdout, stderr, code, timedOut }) })
-      c.stdin.write(JSON.stringify({ event: 'user', message: { content: 'OK' } }) + '\n')
-    })
+
+    const [testEndStdin, testPromptFlag] = await Promise.all([
+      runTest(
+        'stream-json-eof',
+        ['--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'],
+        JSON.stringify({ event: 'user', message: { content: 'OK' } }) + '\n',
+        true,
+      ),
+      runTest(
+        'prompt-flag',
+        ['-p', 'OK', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'],
+        undefined,
+        true,
+      ),
+    ])
 
     return jsonResponse({
       ok: true,
@@ -440,7 +457,8 @@ export async function handleAntigravityPascalRequest(
       hasOAuthTokenFile,
       appDataFiles: listNames(appData),
       geminiConfigFiles: listNames(geminiHome ? pathMod.join(geminiHome, 'config') : ''),
-      agyNoMcp,
+      testEndStdin,
+      testPromptFlag,
     }, 200, cors)
   }
 
