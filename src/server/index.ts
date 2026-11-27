@@ -387,6 +387,28 @@ export async function handleAntigravityPascalRequest(
     return jsonResponse(health, 200, cors)
   }
 
+  if (request.method === 'GET' && subpath === '/diag') {
+    const fs = await import('node:fs')
+    const pathMod = await import('node:path')
+    const appData = options.appDataDir ?? process.env.ANTIGRAVITY_PASCAL_APP_DATA_DIR ?? ''
+    const hasOAuthTokenFile = appData ? fs.existsSync(pathMod.join(appData, 'antigravity-oauth-token')) : false
+    const logDir = appData ? pathMod.join(appData, 'log') : ''
+    let latestLogName: string | null = null
+    let latestLogTail: string[] = []
+    if (logDir && fs.existsSync(logDir)) {
+      const files = fs
+        .readdirSync(logDir)
+        .map((name) => ({ name, mtime: fs.statSync(pathMod.join(logDir, name)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime)
+      if (files[0]) {
+        latestLogName = files[0].name
+        const content = fs.readFileSync(pathMod.join(logDir, latestLogName), 'utf8')
+        latestLogTail = content.split(/\r?\n/).slice(-50)
+      }
+    }
+    return jsonResponse({ ok: true, appData, hasOAuthTokenFile, latestLogName, latestLogTail }, 200, cors)
+  }
+
   if (request.method === 'GET' && subpath === '/models') {
     const result = await modelsList(options)
     return jsonResponse(result, 200, cors)
