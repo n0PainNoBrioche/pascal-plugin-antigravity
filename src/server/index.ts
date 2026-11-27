@@ -416,6 +416,17 @@ export async function handleAntigravityPascalRequest(
 
     const emptyGemini = '/tmp/diag-empty-gemini'
     fs.mkdirSync(pathMod.join(emptyGemini, 'config'), { recursive: true })
+    const cleanHome = '/tmp/diag-clean-home'
+    fs.mkdirSync(pathMod.join(cleanHome, '.config', 'antigravity'), { recursive: true })
+    try {
+      if (fs.existsSync('/root/.config/antigravity/plugin-secrets.json')) {
+        fs.copyFileSync('/root/.config/antigravity/plugin-secrets.json', pathMod.join(cleanHome, '.config', 'antigravity', 'plugin-secrets.json'))
+      }
+      if (fs.existsSync('/root/.gemini/antigravity-cli')) {
+        fs.cpSync('/root/.gemini/antigravity-cli', pathMod.join(cleanHome, '.gemini', 'antigravity-cli'), { recursive: true })
+      }
+    } catch {}
+
     const runTest = (label: string, args: string[], writeStdin?: string, endStdin = false) =>
       new Promise<{ label: string; stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
         let stdout = ''
@@ -423,7 +434,7 @@ export async function handleAntigravityPascalRequest(
         let timedOut = false
         const c = spawn('/usr/local/bin/agy', args, {
           cwd: '/app',
-          env: { ...process.env, GEMINI_HOME: emptyGemini, ANTIGRAVITY_APP_DATA_DIR: appData || '/tmp/diag-empty-app', AGY_ACP_FORCE_FILE_STORAGE: '1' },
+          env: { ...process.env, HOME: cleanHome, GEMINI_HOME: pathMod.join(cleanHome, '.gemini'), ANTIGRAVITY_APP_DATA_DIR: appData || '/tmp/diag-empty-app', AGY_ACP_FORCE_FILE_STORAGE: '1' },
           stdio: ['pipe', 'pipe', 'pipe'],
         })
         c.stdout.on('data', (d) => { stdout += d.toString() })
@@ -432,7 +443,7 @@ export async function handleAntigravityPascalRequest(
           timedOut = true
           c.kill('SIGQUIT')
           setTimeout(() => { try { c.kill('SIGKILL') } catch {} }, 1000)
-        }, 8000)
+        }, 12000)
         c.once('exit', (code) => { clearTimeout(t); resolve({ label, stdout, stderr, code, timedOut }) })
         if (writeStdin) c.stdin.write(writeStdin)
         if (endStdin) c.stdin.end()
@@ -442,45 +453,16 @@ export async function handleAntigravityPascalRequest(
     try { fs.rmSync(diagLogPath, { force: true }) } catch {}
 
     const testPromptFlag = await runTest(
-      'prompt-flag',
+      'prompt-flag-no-mcp',
       ['-p', 'OK', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low', '--log-file', diagLogPath],
       undefined,
       true,
     )
 
-    let goroutines: string[] = []
-    try {
-      if (fs.existsSync(diagLogPath)) {
-        const full = fs.readFileSync(diagLogPath, 'utf8')
-        goroutines = full
-          .split(/\n\n(?=goroutine )/)
-          .filter((g) => /^goroutine /.test(g) && /cascade|planner|Step|Generate|codeAssist|main\.main|printmode|RunPrint/i.test(g))
-          .slice(0, 12)
-      }
-    } catch (e) {
-      goroutines = [e instanceof Error ? e.message : String(e)]
-    }
-
-    const pascalMcpTest = await new Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
-      let stdout = ''
-      let stderr = ''
-      let timedOut = false
-      const c = spawn('pascal', ['mcp', 'connect'], {
-        cwd: '/app',
-        env: process.env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      c.stdout.on('data', (d) => { stdout += d.toString() })
-      c.stderr.on('data', (d) => { stderr += d.toString() })
-      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 5000)
-      c.once('exit', (code) => { clearTimeout(t); resolve({ stdout, stderr, code, timedOut }) })
-      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'diag', version: '1.0' } } }) + '\n')
-    })
-
     return jsonResponse({
       ok: true,
       agyVersion,
-      pascalMcpTest,
+      testPromptFlag,
     }, 200, cors)
   }
 
