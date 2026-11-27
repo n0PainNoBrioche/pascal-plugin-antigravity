@@ -157,15 +157,17 @@ function isSafeHref(url: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(url.trim())
 }
 
-const INLINE_TOKEN_RE = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\[[^\]]+\]\([^)\s]+\)|\*[^*\n]+?\*)/g
+const INLINE_TOKEN_PATTERN =
+  '(`[^`\\n]+`|\\*\\*[^*\\n]+?\\*\\*|__[^_\\n]+?__|\\[[^\\]]+\\]\\([^)\\s]+\\)|\\*[^*\\n]+?\\*)'
 
-function renderInlineMarkdown(text: string): React.ReactNode[] {
+export function renderInlineMarkdown(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = []
   let lastIndex = 0
   let key = 0
-  INLINE_TOKEN_RE.lastIndex = 0
+  // Use a local RegExp instance per call so recursive calls never reset an outer loop's lastIndex.
+  const regex = new RegExp(INLINE_TOKEN_PATTERN, 'g')
 
-  let match = INLINE_TOKEN_RE.exec(text)
+  let match = regex.exec(text)
   while (match) {
     if (match.index > lastIndex) {
       nodes.push(<Fragment key={key++}>{text.slice(lastIndex, match.index)}</Fragment>)
@@ -219,7 +221,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
     }
 
     lastIndex = match.index + token.length
-    match = INLINE_TOKEN_RE.exec(text)
+    match = regex.exec(text)
   }
 
   if (lastIndex < text.length) {

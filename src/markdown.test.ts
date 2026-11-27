@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseMarkdownBlocks } from './markdown.tsx'
+import { parseMarkdownBlocks, renderInlineMarkdown } from './markdown.tsx'
 
 describe('parseMarkdownBlocks', () => {
   it('parses headings, lists, blockquotes, tables, and fenced code blocks', () => {
@@ -35,5 +35,10 @@ describe('parseMarkdownBlocks', () => {
   it('handles unclosed fenced code blocks gracefully while streaming', () => {
     const blocks = parseMarkdownBlocks('```ts\nconst x = 1')
     expect(blocks).toEqual([{ kind: 'code', lang: 'ts', content: 'const x = 1' }])
+  })
+
+  it('does not infinite-loop on nested bold + italic or inline code', () => {
+    const nodes = renderInlineMarkdown('**Texte *italique* et `code`** puis **suite**')
+    expect(nodes.length).toBeGreaterThan(0)
   })
 })
