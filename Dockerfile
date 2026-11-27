@@ -17,6 +17,7 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash \
 
 COPY package.json tsconfig.json ./
 COPY src ./src
+COPY skills ./skills
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

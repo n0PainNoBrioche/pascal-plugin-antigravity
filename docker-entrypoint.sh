@@ -17,6 +17,12 @@ if [ ! -L /root/.pascal ]; then
   ln -s /data/pascal /root/.pascal
 fi
 
+# Seed/sync bundled Pascal skills (architecte, pascal-3d, furniture-fit)
+if [ -d /app/skills ]; then
+  mkdir -p "${GEMINI_DIR}/config/skills"
+  cp -rf /app/skills/* "${GEMINI_DIR}/config/skills/"
+fi
+
 # Seed default Pascal MCP config if not already present
 MCP_CONFIG="${GEMINI_DIR}/config/mcp_config.json"
 if [ ! -f "${MCP_CONFIG}" ]; then
