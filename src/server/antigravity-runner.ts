@@ -576,6 +576,19 @@ export class AntigravitySessionManager {
         if (session.stderrLines.length > 40) {
           session.stderrLines.shift()
         }
+        if (session.activeTurn && isAuthenticationError(line)) {
+          const turn = session.activeTurn
+          session.activeTurn = null
+          turn.emit({
+            type: 'error',
+            message:
+              'Authentification Google requise dans le bridge. Utilise le bouton de connexion Google dans le panneau Antigravity.',
+            authRequired: true,
+          })
+          turn.resolve()
+          this.killSessionProcess(session.sessionId)
+          return
+        }
       }
     })
 
