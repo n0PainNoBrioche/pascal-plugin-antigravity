@@ -416,7 +416,11 @@ export async function handleAntigravityPascalRequest(
       const full = fs.readFileSync(logPath, 'utf8')
       mcpLog = full.split(/\r?\n/).filter((l) => /mcp|pascal|error|fail|streamGenerateContent/i.test(l)).slice(-40).join('\n')
     } catch {}
-    return jsonResponse({ ok: true, res, mcpLog }, 200, cors)
+    let mcpWire = ''
+    try {
+      mcpWire = fs.readFileSync('/tmp/mcp-wire.log', 'utf8').slice(-4000)
+    } catch {}
+    return jsonResponse({ ok: true, res, mcpWire, mcpLog }, 200, cors)
   }
 
   if (request.method === 'GET' && subpath === '/models') {

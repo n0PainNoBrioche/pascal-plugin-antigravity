@@ -9,10 +9,17 @@
  * emitted avoids the race condition in headless clients like `agy`.
  */
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 import readline from 'node:readline'
 
+const logWire = (dir, line) => {
+  try {
+    fs.appendFileSync('/tmp/mcp-wire.log', `${new Date().toISOString()} ${dir} ${line.slice(0, 220)}\n`)
+  } catch {}
+}
+
 const child = spawn('pascal', ['mcp', 'connect'], {
-  stdio: ['pipe', 'pipe', 'inherit'],
+  stdio: ['pipe', 'pipe', 'pipe'],
   env: process.env,
 })
 
@@ -20,10 +27,16 @@ let initRequestId = null
 let initialized = false
 const pendingLines = []
 
+child.stderr.on('data', (d) => {
+  logWire('CHILD_ERR', d.toString().trim())
+  process.stderr.write(d)
+})
+
 child.stdout.pipe(process.stdout)
 
 const childOut = readline.createInterface({ input: child.stdout, crlfDelay: Infinity })
 childOut.on('line', (line) => {
+  logWire('CHILD_OUT', line)
   if (initialized) return
   try {
     const msg = JSON.parse(line)
@@ -32,7 +45,9 @@ childOut.on('line', (line) => {
       setTimeout(() => {
         console.error(`[pascal-mcp-stdio] initialized; flushing ${pendingLines.length} queued message(s)`)
         while (pendingLines.length > 0) {
-          child.stdin.write(`${pendingLines.shift()}\n`)
+          const q = pendingLines.shift()
+          logWire('FLUSH_IN', q)
+          child.stdin.write(`${q}\n`)
         }
       }, 50)
     }
@@ -43,6 +58,7 @@ childOut.on('line', (line) => {
 
 const stdinIn = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
 stdinIn.on('line', (line) => {
+  logWire('AGY_IN', line)
   if (initialized) {
     child.stdin.write(`${line}\n`)
     return
