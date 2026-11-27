@@ -448,34 +448,27 @@ export async function handleAntigravityPascalRequest(
       true,
     )
 
-    let diagErrors: string[] = []
-    let diagTail = ''
+    let goroutines: string[] = []
     try {
       if (fs.existsSync(diagLogPath)) {
         const full = fs.readFileSync(diagLogPath, 'utf8')
-        diagErrors = full
-          .split(/\r?\n/)
-          .filter((l) => /^[EW]\d{4}|streamGenerateContent|token|login|auth|error|fail|panic/i.test(l))
-          .slice(0, 60)
-        diagTail = full.slice(-3000)
+        goroutines = full
+          .split(/\n\n(?=goroutine )/)
+          .filter((g) => /^goroutine /.test(g) && /cascade|planner|Step|Generate|codeAssist|main\.main|printmode|RunPrint/i.test(g))
+          .slice(0, 12)
       }
     } catch (e) {
-      diagTail = e instanceof Error ? e.message : String(e)
+      goroutines = [e instanceof Error ? e.message : String(e)]
     }
 
     return jsonResponse({
       ok: true,
       agyVersion,
-      googleReachable,
-      appData,
-      hasOAuthTokenFile,
-      dataFiles: listNames('/data'),
-      appDataFiles: listNames(appData),
-      geminiFiles: listNames(geminiHome),
-      rootFiles: listNames('/root'),
-      testPromptFlag,
-      diagErrors,
-      diagTail,
+      testPromptFlag: {
+        code: testPromptFlag.code,
+        timedOut: testPromptFlag.timedOut,
+      },
+      goroutines,
     }, 200, cors)
   }
 
