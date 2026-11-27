@@ -39,4 +39,8 @@ if [ ! -f "${MCP_CONFIG}" ]; then
 JSON
 fi
 
+# Pre-warm the managed Pascal MCP daemon so `pascal mcp connect` does not race during agy startup
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"entrypoint","version":"1.0"}}}\n' \
+  | timeout 10 pascal mcp connect >/dev/null 2>&1 || true
+
 exec "$@"
