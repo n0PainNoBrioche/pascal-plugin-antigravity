@@ -461,14 +461,26 @@ export async function handleAntigravityPascalRequest(
       goroutines = [e instanceof Error ? e.message : String(e)]
     }
 
+    const pascalMcpTest = await new Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
+      let stdout = ''
+      let stderr = ''
+      let timedOut = false
+      const c = spawn('pascal', ['mcp', 'connect'], {
+        cwd: '/app',
+        env: process.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      c.stdout.on('data', (d) => { stdout += d.toString() })
+      c.stderr.on('data', (d) => { stderr += d.toString() })
+      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 5000)
+      c.once('exit', (code) => { clearTimeout(t); resolve({ stdout, stderr, code, timedOut }) })
+      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'diag', version: '1.0' } } }) + '\n')
+    })
+
     return jsonResponse({
       ok: true,
       agyVersion,
-      testPromptFlag: {
-        code: testPromptFlag.code,
-        timedOut: testPromptFlag.timedOut,
-      },
-      goroutines,
+      pascalMcpTest,
     }, 200, cors)
   }
 
