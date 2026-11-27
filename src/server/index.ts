@@ -388,21 +388,35 @@ export async function handleAntigravityPascalRequest(
   }
 
   if (request.method === 'GET' && subpath === '/diag') {
+    const fs = await import('node:fs')
     const { spawn } = await import('node:child_process')
-    const res = await new Promise<{ stdoutHead: string; stdoutLen: number; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
+    const logPath = '/tmp/agy-normal.log'
+    try { fs.rmSync(logPath, { force: true }) } catch {}
+    const res = await new Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>((resolve) => {
       let stdout = ''
       let stderr = ''
       let timedOut = false
-      const c = spawn('node', ['/app/src/bridge/pascal-mcp-stdio.mjs'], { cwd: '/app', env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+      const c = spawn('/usr/local/bin/agy', ['-p', 'OK', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low', '--log-file', logPath], {
+        cwd: '/app',
+        env: { ...process.env, GEMINI_HOME: '/data/gemini', ANTIGRAVITY_APP_DATA_DIR: '/data/antigravity', AGY_ACP_FORCE_FILE_STORAGE: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
       c.stdout.on('data', (d) => { stdout += d.toString() })
       c.stderr.on('data', (d) => { stderr += d.toString() })
-      const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 5000)
-      c.once('exit', (code) => { clearTimeout(t); resolve({ stdoutHead: stdout.slice(0, 600), stdoutLen: stdout.length, stderr, code, timedOut }) })
-      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'diag', version: '1.0' } } }) + '\n')
-      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
-      c.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n')
+      const t = setTimeout(() => {
+        timedOut = true
+        c.kill('SIGQUIT')
+        setTimeout(() => { try { c.kill('SIGKILL') } catch {} }, 1000)
+      }, 10000)
+      c.once('exit', (code) => { clearTimeout(t); resolve({ stdout, stderr, code, timedOut }) })
+      c.stdin.end()
     })
-    return jsonResponse({ ok: true, res }, 200, cors)
+    let mcpLog = ''
+    try {
+      const full = fs.readFileSync(logPath, 'utf8')
+      mcpLog = full.split(/\r?\n/).filter((l) => /mcp|pascal|error|fail|streamGenerateContent/i.test(l)).slice(-40).join('\n')
+    } catch {}
+    return jsonResponse({ ok: true, res, mcpLog }, 200, cors)
   }
 
   if (request.method === 'GET' && subpath === '/models') {
