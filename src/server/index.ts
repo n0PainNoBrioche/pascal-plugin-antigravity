@@ -428,7 +428,11 @@ export async function handleAntigravityPascalRequest(
         })
         c.stdout.on('data', (d) => { stdout += d.toString() })
         c.stderr.on('data', (d) => { stderr += d.toString() })
-        const t = setTimeout(() => { timedOut = true; c.kill('SIGKILL') }, 15000)
+        const t = setTimeout(() => {
+          timedOut = true
+          c.kill('SIGQUIT')
+          setTimeout(() => { try { c.kill('SIGKILL') } catch {} }, 1000)
+        }, 8000)
         c.once('exit', (code) => { clearTimeout(t); resolve({ label, stdout, stderr, code, timedOut }) })
         if (writeStdin) c.stdin.write(writeStdin)
         if (endStdin) c.stdin.end()
