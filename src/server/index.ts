@@ -434,20 +434,24 @@ export async function handleAntigravityPascalRequest(
         if (endStdin) c.stdin.end()
       })
 
-    const [testEndStdin, testPromptFlag] = await Promise.all([
-      runTest(
-        'stream-json-eof',
-        ['--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'],
-        JSON.stringify({ event: 'user', message: { content: 'OK' } }) + '\n',
-        true,
-      ),
-      runTest(
-        'prompt-flag',
-        ['-p', 'OK', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low'],
-        undefined,
-        true,
-      ),
-    ])
+    const diagLogPath = '/tmp/agy-diag.log'
+    try { fs.rmSync(diagLogPath, { force: true }) } catch {}
+
+    const testPromptFlag = await runTest(
+      'prompt-flag',
+      ['-p', 'OK', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', 'gemini-3.8-flash-low', '--log-file', diagLogPath],
+      undefined,
+      true,
+    )
+
+    let diagLog = ''
+    try {
+      if (fs.existsSync(diagLogPath)) {
+        diagLog = fs.readFileSync(diagLogPath, 'utf8').slice(-6000)
+      }
+    } catch (e) {
+      diagLog = e instanceof Error ? e.message : String(e)
+    }
 
     return jsonResponse({
       ok: true,
@@ -457,8 +461,8 @@ export async function handleAntigravityPascalRequest(
       hasOAuthTokenFile,
       appDataFiles: listNames(appData),
       geminiConfigFiles: listNames(geminiHome ? pathMod.join(geminiHome, 'config') : ''),
-      testEndStdin,
       testPromptFlag,
+      diagLog,
     }, 200, cors)
   }
 
