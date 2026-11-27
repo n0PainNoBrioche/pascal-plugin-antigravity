@@ -25,7 +25,7 @@ fi
 
 # Seed or update Pascal MCP config to use the serialized stdio wrapper
 MCP_CONFIG="${GEMINI_DIR}/config/mcp_config.json"
-if [ ! -f "${MCP_CONFIG}" ] || grep -q '"command": "pascal"' "${MCP_CONFIG}"; then
+if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}"; then
   cat > "${MCP_CONFIG}" <<'JSON'
 {
   "mcpServers": {

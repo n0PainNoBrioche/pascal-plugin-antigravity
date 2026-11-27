@@ -30,6 +30,7 @@ childOut.on('line', (line) => {
     if (initRequestId !== null && msg.id === initRequestId && msg.result !== undefined) {
       initialized = true
       setTimeout(() => {
+        console.error(`[pascal-mcp-stdio] initialized; flushing ${pendingLines.length} queued message(s)`)
         while (pendingLines.length > 0) {
           child.stdin.write(`${pendingLines.shift()}\n`)
         }
