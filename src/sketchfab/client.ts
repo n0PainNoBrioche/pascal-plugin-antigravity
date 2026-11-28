@@ -63,10 +63,6 @@ export async function searchSketchfabModels(
   const headers: Record<string, string> = {
     'User-Agent': 'pascal-sketchfab-plugin/0.1.0',
   }
-  const token = options.apiToken ?? process.env.SKETCHFAB_API_TOKEN
-  if (token?.trim()) {
-    headers.Authorization = `Token ${token.trim()}`
-  }
 
   const res = await fetchImpl(`${SKETCHFAB_API_BASE}/search?${params.toString()}`, { headers })
   if (!res.ok) {
@@ -143,9 +139,9 @@ export async function downloadSketchfabGlb(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ glb: Buffer; dimensionsMeters: [number, number, number] | null }> {
   const token = (apiToken ?? process.env.SKETCHFAB_API_TOKEN ?? '').trim()
-  if (!token) {
+  if (!token || token.startsWith('secret-ref:')) {
     throw new Error(
-      'SKETCHFAB_API_TOKEN manquant sur le serveur. Ajoute ton token Sketchfab dans les variables d’environnement.',
+      'SKETCHFAB_API_TOKEN manquant ou invalide sur le serveur. Renseigne ton vrai token Sketchfab dans Dokploy (pascal-custom → Environment → SKETCHFAB_API_TOKEN).',
     )
   }
 
