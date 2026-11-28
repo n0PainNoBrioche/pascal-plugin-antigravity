@@ -70,7 +70,7 @@ async function getModelFiles(assetId, resolution = '1k') {
       `https://cdn.polyhaven.com/asset_img/thumbs/${encodeURIComponent(assetId)}.png?width=256&height=256&format=webp`,
     resolution: chosenRes,
     gltfUrl: variant.url,
-    pascalGlbPath: `/api/plugins/polyhaven/glb/${encodeURIComponent(assetId)}.glb?res=${encodeURIComponent(chosenRes)}`,
+    pascalGlbUrl: `${(process.env.PASCAL_PUBLIC_URL || 'https://archi.brioche.ovh').replace(/\/$/, '')}/api/plugins/polyhaven/glb/${encodeURIComponent(assetId)}.glb?res=${encodeURIComponent(chosenRes)}`,
   }
 }
 

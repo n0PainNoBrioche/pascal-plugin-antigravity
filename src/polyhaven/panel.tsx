@@ -73,12 +73,17 @@ export default function PolyHavenPanel() {
         throw new Error(data.error ?? `Impossible de préparer ${model.name}`)
       }
 
+      const resolvedSrc =
+        data.src.startsWith('http://') || data.src.startsWith('https://')
+          ? data.src
+          : `${window.location.origin}${data.src.startsWith('/') ? '' : '/'}${data.src}`
+
       const asset: AssetInput = {
         id: `polyhaven:${model.id}`,
         category: model.categories[0] ?? 'furniture',
         name: model.name,
         thumbnail: model.thumbnailUrl,
-        src: data.src,
+        src: resolvedSrc,
         dimensions: data.dimensionsMeters ?? model.dimensionsMeters,
         tags: model.tags,
       }
