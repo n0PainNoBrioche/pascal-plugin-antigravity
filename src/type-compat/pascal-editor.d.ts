@@ -27,3 +27,16 @@ export interface SceneGraph {
 
 export function applySceneGraphToEditor(graph: SceneGraph): void
 export function registerEditorHostPanel(panel: EditorHostPanel): void
+
+export interface EditorStoreState {
+  setSelectedItem: (asset: unknown) => void
+  setTool: (tool: string) => void
+  setMode: (mode: string) => void
+}
+
+export interface UseEditorHook {
+  <T>(selector: (state: EditorStoreState) => T): T
+  getState(): EditorStoreState
+}
+
+export const useEditor: UseEditorHook

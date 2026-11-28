@@ -50,3 +50,9 @@ export {
   buildSceneContextPromptPrefix,
   extractSceneIdFromPathname,
 } from './scene-prompt'
+export {
+  POLYHAVEN_PANEL_ID,
+  POLYHAVEN_PLUGIN_ID,
+  polyhavenHostPanel,
+  polyhavenPlugin,
+} from './polyhaven/plugin'

@@ -5,6 +5,7 @@ export interface ViewerSelectionState {
 
 export interface ViewerStoreState {
   selection: ViewerSelectionState
+  setSelection: (selection: { selectedIds: string[]; zoneId?: null; levelId?: string | null }) => void
 }
 
 export interface UseViewerHook {
