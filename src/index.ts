@@ -51,8 +51,8 @@ export {
   extractSceneIdFromPathname,
 } from './scene-prompt'
 export {
-  POLYHAVEN_PANEL_ID,
-  POLYHAVEN_PLUGIN_ID,
-  polyhavenHostPanel,
-  polyhavenPlugin,
-} from './polyhaven/plugin'
+  SKETCHFAB_PANEL_ID,
+  SKETCHFAB_PLUGIN_ID,
+  sketchfabHostPanel,
+  sketchfabPlugin,
+} from './sketchfab/plugin'

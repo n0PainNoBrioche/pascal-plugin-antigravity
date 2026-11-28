@@ -23,9 +23,9 @@ if [ -d /app/skills ]; then
   cp -rf /app/skills/* "${GEMINI_DIR}/config/skills/"
 fi
 
-# Seed or update Pascal + Poly Haven MCP config
+# Seed or update Pascal + Sketchfab MCP config
 MCP_CONFIG="${GEMINI_DIR}/config/mcp_config.json"
-if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}" || ! grep -q 'polyhaven-mcp.mjs' "${MCP_CONFIG}"; then
+if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}" || ! grep -q 'sketchfab-mcp.mjs' "${MCP_CONFIG}"; then
   cat > "${MCP_CONFIG}" <<'JSON'
 {
   "mcpServers": {
@@ -34,9 +34,9 @@ if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}" 
       "args": ["/app/src/bridge/pascal-mcp-stdio.mjs"],
       "disabled": false
     },
-    "polyhaven": {
+    "sketchfab": {
       "command": "node",
-      "args": ["/app/src/bridge/polyhaven-mcp.mjs"],
+      "args": ["/app/src/bridge/sketchfab-mcp.mjs"],
       "disabled": false
     }
   }

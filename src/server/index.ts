@@ -694,4 +694,4 @@ export {
   isPascalMutatingTool,
   parseAntigravityStreamLine,
 } from './stream-parser.ts'
-export { handlePolyHavenRequest } from '../polyhaven/server.ts'
+export { handleSketchfabRequest } from '../sketchfab/server.ts'
