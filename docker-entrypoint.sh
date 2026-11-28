@@ -23,15 +23,20 @@ if [ -d /app/skills ]; then
   cp -rf /app/skills/* "${GEMINI_DIR}/config/skills/"
 fi
 
-# Seed or update Pascal MCP config to use the serialized stdio wrapper
+# Seed or update Pascal + Poly Haven MCP config
 MCP_CONFIG="${GEMINI_DIR}/config/mcp_config.json"
-if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}"; then
+if [ ! -f "${MCP_CONFIG}" ] || ! grep -q 'pascal-mcp-stdio.mjs' "${MCP_CONFIG}" || ! grep -q 'polyhaven-mcp.mjs' "${MCP_CONFIG}"; then
   cat > "${MCP_CONFIG}" <<'JSON'
 {
   "mcpServers": {
     "pascal": {
       "command": "node",
       "args": ["/app/src/bridge/pascal-mcp-stdio.mjs"],
+      "disabled": false
+    },
+    "polyhaven": {
+      "command": "node",
+      "args": ["/app/src/bridge/polyhaven-mcp.mjs"],
       "disabled": false
     }
   }
